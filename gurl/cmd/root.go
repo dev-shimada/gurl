@@ -36,7 +36,10 @@ var rootCmd = &cobra.Command{
 		resolve, _ := cmd.Flags().GetStringArray("resolve")
 		limitRate, _ := cmd.Flags().GetString("limit-rate")
 		compressed, _ := cmd.Flags().GetBool("compressed")
-		ExecuteRequest(args[0], verbose, include, head, silent, headers, method, data, outputFile, remoteName, followRedirects, user, proxy, connectTimeout, maxTime, cookie, cookieJar, form, insecure, dataUrlEncode, dataBinary, resolve, limitRate, compressed)
+		userAgent, _ := cmd.Flags().GetString("user-agent")
+		retry, _ := cmd.Flags().GetInt("retry")
+		retryDelay, _ := cmd.Flags().GetInt("retry-delay")
+		ExecuteRequest(args[0], verbose, include, head, silent, headers, method, data, outputFile, remoteName, followRedirects, user, proxy, connectTimeout, maxTime, cookie, cookieJar, form, insecure, dataUrlEncode, dataBinary, resolve, limitRate, compressed, userAgent, retry, retryDelay)
 	},
 }
 
@@ -65,6 +68,8 @@ func init() {
 	rootCmd.Flags().String("limit-rate", "", "Limit data transfer speed")
 	rootCmd.Flags().Bool("compressed", false, "Request compressed response (e.g., gzip, deflate)")
 	rootCmd.Flags().StringP("user-agent", "A", "", "Specify User-Agent string to send to the HTTP server")
+	rootCmd.Flags().Int("retry", 0, "Maximum number of retries for transient errors")
+	rootCmd.Flags().Int("retry-delay", 1, "Delay between retries in seconds")
 }
 
 func Execute() {

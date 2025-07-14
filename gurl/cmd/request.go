@@ -20,20 +20,20 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jlaffaye/ftp"
 	"github.com/icholy/digest"
+	"github.com/jlaffaye/ftp"
 	"github.com/vadimi/go-http-ntlm"
 )
 
-func ExecuteRequest(requestURL string, verbose bool, include bool, head bool, silent bool, headers []string, method string, data string, outputFile string, remoteName bool, followRedirects bool, user string, proxy string, connectTimeout int, maxTime int, cookie string, cookieJar string, form []string, insecure bool, dataUrlEncode []string, dataBinary string, resolve []string, limitRate string, compressed bool) {
+func ExecuteRequest(requestURL string, verbose bool, include bool, head bool, silent bool, headers []string, method string, data string, outputFile string, remoteName bool, followRedirects bool, user string, proxy string, connectTimeout int, maxTime int, cookie string, cookieJar string, form []string, insecure bool, dataUrlEncode []string, dataBinary string, resolve []string, limitRate string, compressed bool, userAgent string, retry int, retryDelay int) {
 	if strings.HasPrefix(requestURL, "ftp://") {
 		executeFTPRequest(requestURL, user, outputFile, remoteName, connectTimeout, maxTime)
 	} else {
-				executeHTTPRequest(requestURL, verbose, include, head, silent, headers, method, data, outputFile, remoteName, followRedirects, user, proxy, connectTimeout, maxTime, cookie, cookieJar, form, insecure, dataUrlEncode, dataBinary, resolve, limitRate, compressed)
+		executeHTTPRequest(requestURL, verbose, include, head, silent, headers, method, data, outputFile, remoteName, followRedirects, user, proxy, connectTimeout, maxTime, cookie, cookieJar, form, insecure, dataUrlEncode, dataBinary, resolve, limitRate, compressed, userAgent, retry, retryDelay)
 	}
 }
 
-func executeHTTPRequest(requestURL string, verbose bool, include bool, head bool, silent bool, headers []string, method string, data string, outputFile string, remoteName bool, followRedirects bool, user string, proxy string, connectTimeout int, maxTime int, cookie string, cookieJar string, form []string, insecure bool, dataUrlEncode []string, dataBinary string, resolve []string, limitRate string, compressed bool) {
+func executeHTTPRequest(requestURL string, verbose bool, include bool, head bool, silent bool, headers []string, method string, data string, outputFile string, remoteName bool, followRedirects bool, user string, proxy string, connectTimeout int, maxTime int, cookie string, cookieJar string, form []string, insecure bool, dataUrlEncode []string, dataBinary string, resolve []string, limitRate string, compressed bool, userAgent string, retry int, retryDelay int) {
 	var reqBody io.Reader
 	var contentType string
 
@@ -83,43 +83,43 @@ func executeHTTPRequest(requestURL string, verbose bool, include bool, head bool
 		// Handle -d data
 		reqBody = bytes.NewBuffer([]byte(data))
 		// Default content type for -d if not specified by -H
-        contentType = "application/x-www-form-urlencoded"
-    } else if len(dataUrlEncode) > 0 {
-        if data != "" {
-            fmt.Fprintf(os.Stderr, "Warning: You can only use one of --data, --data-urlencode, or --form.\n")
-            os.Exit(1)
-        }
-        formValues := url.Values{}
-        for _, d := range dataUrlEncode {
-            parts := strings.SplitN(d, "=", 2)
-            if len(parts) == 2 {
-                formValues.Add(parts[0], parts[1])
-            } else {
-                formValues.Add(d, "")
-            }
-        }
-        reqBody = bytes.NewBuffer([]byte(formValues.Encode()))
-        contentType = "application/x-www-form-urlencoded"
-    } else if dataBinary != "" {
-        if data != "" || len(dataUrlEncode) > 0 || len(form) > 0 {
-            fmt.Fprintf(os.Stderr, "Warning: You can only use one of --data, --data-urlencode, --data-binary, or --form.\n")
-            os.Exit(1)
-        }
-        reqBody = bytes.NewBuffer([]byte(dataBinary))
-        // Content-Type is not set by default for --data-binary, curl leaves it to the user
-    }
+		contentType = "application/x-www-form-urlencoded"
+	} else if len(dataUrlEncode) > 0 {
+		if data != "" {
+			fmt.Fprintf(os.Stderr, "Warning: You can only use one of --data, --data-urlencode, or --form.\n")
+			os.Exit(1)
+		}
+		formValues := url.Values{}
+		for _, d := range dataUrlEncode {
+			parts := strings.SplitN(d, "=", 2)
+			if len(parts) == 2 {
+				formValues.Add(parts[0], parts[1])
+			} else {
+				formValues.Add(d, "")
+			}
+		}
+		reqBody = bytes.NewBuffer([]byte(formValues.Encode()))
+		contentType = "application/x-www-form-urlencoded"
+	} else if dataBinary != "" {
+		if data != "" || len(dataUrlEncode) > 0 || len(form) > 0 {
+			fmt.Fprintf(os.Stderr, "Warning: You can only use one of --data, --data-urlencode, --data-binary, or --form.\n")
+			os.Exit(1)
+		}
+		reqBody = bytes.NewBuffer([]byte(dataBinary))
+		// Content-Type is not set by default for --data-binary, curl leaves it to the user
+	}
 
-    // Apply rate limit if specified
-    if limitRate != "" && reqBody != nil {
-        limit, err := parseRate(limitRate)
-        if err != nil {
-            fmt.Fprintf(os.Stderr, "Error parsing limit-rate: %v\n", err)
-            os.Exit(1)
-        }
-        if limit > 0 {
-            reqBody = &RateLimitedReader{Reader: reqBody, Limit: limit}
-        }
-    }
+	// Apply rate limit if specified
+	if limitRate != "" && reqBody != nil {
+		limit, err := parseRate(limitRate)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing limit-rate: %v\n", err)
+			os.Exit(1)
+		}
+		if limit > 0 {
+			reqBody = &RateLimitedReader{Reader: reqBody, Limit: limit}
+		}
+	}
 
 	if silent {
 		null, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0755)
@@ -136,6 +136,11 @@ func executeHTTPRequest(requestURL string, verbose bool, include bool, head bool
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating request: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Set User-Agent if provided
+	if userAgent != "" {
+		req.Header.Set("User-Agent", userAgent)
 	}
 
 	// Set Content-Type header if determined by form or data
@@ -201,6 +206,9 @@ func executeHTTPRequest(requestURL string, verbose bool, include bool, head bool
 				KeepAlive: 30 * time.Second,
 				DualStack: true,
 			}
+			if resolvedAddr, ok := resolvedAddresses[addr]; ok {
+				addr = resolvedAddr
+			}
 			return dialer.DialContext(ctx, network, addr)
 		}
 	}
@@ -234,28 +242,26 @@ func executeHTTPRequest(requestURL string, verbose bool, include bool, head bool
 				username = domainParts[1]
 			}
 
-			// Check if NTLM authentication is requested (e.g., by a specific header or implicit)
-			// For simplicity, let's assume if domain is present, it's NTLM, otherwise Digest
 			if domain != "" {
 				fmt.Fprintf(os.Stderr, "Info: Attempting NTLM authentication for user %s\\%s\n", domain, username)
 				authTransport = &httpntlm.NtlmTransport{
-					Domain: domain,
-					User: username,
+					Domain:   domain,
+					User:     username,
 					Password: password,
 				}
 			} else {
 				fmt.Fprintf(os.Stderr, "Info: Attempting Digest authentication for user %s\n", username)
 				authTransport = &digest.Transport{
-					Username: username,
-					Password: password,
+					Username:  username,
+					Password:  password,
 					Transport: tr,
 				}
 			}
 		} else if len(parts) == 1 {
 			fmt.Fprintf(os.Stderr, "Warning: Digest/NTLM authentication requires a password. Using empty password.\n")
 			authTransport = &digest.Transport{
-				Username: parts[0],
-				Password: "",
+				Username:  parts[0],
+				Password:  "",
 				Transport: tr,
 			}
 		}
@@ -280,7 +286,6 @@ func executeHTTPRequest(requestURL string, verbose bool, include bool, head bool
 	var jar *cookiejar.Jar
 	parsedURL, _ := url.Parse(requestURL)
 
-	// Initialize cookie jar if --cookie-jar is used or if --cookie is used and no jar is yet created
 	if cookieJar != "" || cookie != "" {
 		var newErr error
 		jar, newErr = cookiejar.New(nil)
@@ -290,7 +295,6 @@ func executeHTTPRequest(requestURL string, verbose bool, include bool, head bool
 		}
 		client.Jar = jar
 
-		// Load cookies from file if --cookie-jar is specified and file exists
 		if cookieJar != "" {
 			if _, err := os.Stat(cookieJar); err == nil {
 				file, err := os.Open(cookieJar)
@@ -304,7 +308,7 @@ func executeHTTPRequest(requestURL string, verbose bool, include bool, head bool
 				for scanner.Scan() {
 					line := scanner.Text()
 					if strings.HasPrefix(line, "#") || strings.TrimSpace(line) == "" {
-						continue // Skip comments and empty lines
+						continue
 					}
 					parts := strings.Split(line, "\t")
 					if len(parts) == 7 {
@@ -335,7 +339,6 @@ func executeHTTPRequest(requestURL string, verbose bool, include bool, head bool
 			}
 		}
 
-		// Add cookies from -b flag
 		if cookie != "" {
 			cookieParts := strings.Split(cookie, ";")
 			for _, cp := range cookieParts {
@@ -349,9 +352,20 @@ func executeHTTPRequest(requestURL string, verbose bool, include bool, head bool
 		}
 	}
 
-	resp, err := client.Do(req)
+	var resp *http.Response
+	for i := 0; i <= retry; i++ {
+		resp, err = client.Do(req)
+		if err == nil {
+			break
+		}
+		if i < retry {
+			fmt.Fprintf(os.Stderr, "Error making request: %v. Retrying in %d second(s)...\n", err, retryDelay)
+			time.Sleep(time.Duration(retryDelay) * time.Second)
+		}
+	}
+
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error making request: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error making request after %d retries: %v\n", retry, err)
 		os.Exit(1)
 	}
 	defer resp.Body.Close()
@@ -380,28 +394,18 @@ func executeHTTPRequest(requestURL string, verbose bool, include bool, head bool
 		file, err := os.Create(cookieJar)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating cookie jar file for writing: %v\n", err)
-			// Do not exit, just warn, as response body might still be useful
 		} else {
 			defer file.Close()
 			cookies := jar.Cookies(parsedURL)
 			for _, c := range cookies {
-				// Netscape cookie file format
-				// domain<tab>flag<tab>path<tab>secure<tab>expiration<tab>name<tab>value
-				// flag: TRUE if host-only, FALSE if domain-wide
-				// secure: TRUE if secure, FALSE otherwise
-				// expiration: Unix timestamp
-
 				flag := "FALSE"
-				// Determine if it's a host-only cookie (no leading dot in domain)
 				if !strings.HasPrefix(c.Domain, ".") {
 					flag = "TRUE"
 				}
-
 				secure := "FALSE"
 				if c.Secure {
 					secure = "TRUE"
 				}
-
 				expiration := "0"
 				if !c.Expires.IsZero() {
 					expiration = fmt.Sprintf("%d", c.Expires.Unix())
@@ -413,10 +417,10 @@ func executeHTTPRequest(requestURL string, verbose bool, include bool, head bool
 
 	// Print request details if verbose
 	if verbose {
-		fmt.Fprintf(os.Stderr, ">%s %s HTTP/1.1\n", req.Method, req.URL.RequestURI())
+		fmt.Fprintf(os.Stderr, "> %s %s HTTP/1.1\n", req.Method, req.URL.RequestURI())
 		for name, values := range req.Header {
 			for _, value := range values {
-				fmt.Fprintf(os.Stderr, ">%s: %s\n", name, value)
+				fmt.Fprintf(os.Stderr, "> %s: %s\n", name, value)
 			}
 		}
 		if req.Body != nil && data != "" {
@@ -430,13 +434,13 @@ func executeHTTPRequest(requestURL string, verbose bool, include bool, head bool
 		fmt.Fprintf(os.Stderr, "< HTTP/1.1 %s\n", resp.Status)
 		for name, values := range resp.Header {
 			for _, value := range values {
-				fmt.Fprintf(os.Stderr, "<%s: %s\n", name, value)
+				fmt.Fprintf(os.Stderr, "< %s: %s\n", name, value)
 			}
 		}
 		fmt.Fprintln(os.Stderr, "< \n")
 	}
 
-	if resp.StatusCode >= 400 && resp.StatusCode < 300 {
+	if resp.StatusCode >= 400 {
 		fmt.Fprintf(os.Stderr, "Error: Received status code %d\n", resp.StatusCode)
 		// Attempt to read body even on error for more info
 		body, err := io.ReadAll(resp.Body)
@@ -475,16 +479,16 @@ func executeHTTPRequest(requestURL string, verbose bool, include bool, head bool
 				fmt.Fprintf(writer, "%s: %s\n", name, value)
 			}
 		}
-        fmt.Fprintln(writer, "")
-    }
+		fmt.Fprintln(writer, "")
+	}
 
-    if !head {
-        _, err = io.Copy(writer, respBodyReader)
-        if err != nil {
-            fmt.Fprintf(os.Stderr, "Error writing response body: %v\n", err)
-            os.Exit(1)
-        }
-    }
+	if !head {
+		_, err = io.Copy(writer, respBodyReader)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing response body: %v\n", err)
+			os.Exit(1)
+		}
+	}
 }
 
 // RateLimitedReader wraps an io.Reader and limits its read rate.
@@ -505,7 +509,7 @@ func (r *RateLimitedReader) Read(p []byte) (n int, err error) {
 	if elapsed > 0 {
 		expectedBytes := int64(float64(r.Limit) * elapsed.Seconds())
 		if r.lastReadBytes > expectedBytes {
-			sleepTime := time.Duration(float64(r.lastReadBytes - expectedBytes) / float64(r.Limit) * float64(time.Second))
+			sleepTime := time.Duration(float64(r.lastReadBytes-expectedBytes) / float64(r.Limit) * float64(time.Second))
 			time.Sleep(sleepTime)
 		}
 	}
